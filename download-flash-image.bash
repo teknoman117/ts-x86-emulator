@@ -2,11 +2,11 @@
 die() { echo "$*" 1>&2 ; exit 1; }
 
 # Download Images
-echo "> Downloading images from ftp.embeddedarm.com"
-curl -O "http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-downloads/binaries/3100DISK.ZIP"
-curl -O "http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-downloads/binaries/3100BIOS.ZIP"
-curl -O "http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-downloads/binaries/DOS404.ZIP"
-curl -O "http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-downloads/Disks/TS-3100.ZIP"
+echo "> Downloading images from ftp.embeddedts.com"
+curl -O "http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-downloads/binaries/3100DISK.ZIP"
+curl -O "http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-downloads/binaries/3100BIOS.ZIP"
+curl -O "http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-downloads/binaries/DOS404.ZIP"
+curl -O "http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-downloads/Disks/TS-3100.ZIP"
 
 # Check integrity
 echo "> Checking integrity of images"

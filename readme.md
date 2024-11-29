@@ -3,7 +3,7 @@ KVM Emulator for the Technologic Systems TS-3100
 
 Disclaimer: I have absolutely no connection with this company, this project is purely as a hobby project.
 
-The TS-3100 is an (at the time) low cost single board computer from late 2001 made by Technologic Systems (https://www.embeddedarm.com/).
+The TS-3100 is an (at the time) low cost single board computer from late 2001 made by Technologic Systems (https://www.embeddedts.com/).
 
 Usage
 -----
@@ -34,7 +34,7 @@ make -C tools/flashdump
 # Option 3 - Dumping the image using the official tool
 # Requires a C: drive on the TS-3100 with >512 KiB free
 # Download FLASHUP from Embedded ARM
-curl -O http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-downloads/FLASHUP.ZIP
+curl -O http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-downloads/FLASHUP.ZIP
 # (sha256sum: b03a0bad8866ef2160392d2dfc496167063ea549df14f7cd1e8aa87814c8c61f)
 unzip FLASHUP.ZIP
 # copy FLASHUP.EXE to TS-3100 C: drive
@@ -84,7 +84,7 @@ fdisk roms/drivec.img
 # Hex code (type L to list all codes): 6
 # Command (m for help): w
 
-curl -O http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-downloads/Disks/TS-3100.ZIP
+curl -O http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-downloads/Disks/TS-3100.ZIP
 # (sha256sum: 6d8bd7119d5bdcbd63976252ea6e8611048acf8dc5b4ec67bf55db2f260a92bb)
 unzip TS-3100.ZIP DOS/FORMAT.EXE
 
@@ -130,13 +130,13 @@ The startup process for the board is actually rather neat. The 386EX, being inte
 
 Resources
 ---------
-- Webpage (Link Dead): https://www.embeddedarm.com/products/TS-3100
-- Wiki: https://docs.embeddedarm.com/TS-3100
-- Manual: https://www.embeddedarm.com/documentation/ts-3100-manual.pdf
-- Manual (TS-3200): https://www.embeddedarm.com/documentation/ts-3200-manual.pdf
-- Schematic: https://www.embeddedarm.com/documentation/ts-3100-schematic.pdf
-- Utility Disk: http://ftp.embeddedarm.com/ftp/ts-x86-sbc/old-software-pages/downloads/Disks/TS-3100.ZIP
-- Technologic Systems x86 SBC Resources: http://ftp.embeddedarm.com/ftp/ts-x86-sbc/
+- Webpage (Link Dead): https://www.embeddedts.com/products/TS-3100
+- Wiki: https://docs.embeddedts.com/TS-3100
+- Manual: https://www.embeddedts.com/documentation/ts-3100-manual.pdf
+- Manual (TS-3200): https://www.embeddedts.com/documentation/ts-3200-manual.pdf
+- Schematic: https://www.embeddedts.com/documentation/ts-3100-schematic.pdf
+- Utility Disk: http://ftp.embeddedts.com/ftp/ts-x86-sbc/old-software-pages/downloads/Disks/TS-3100.ZIP
+- Technologic Systems x86 SBC Resources: http://ftp.embeddedts.com/ftp/ts-x86-sbc/
 - Intel 386EX Manual: http://bitsavers.trailing-edge.com/components/intel/80386/272485-001_80386EX_Users_Manual_Feb95.pdf
 - Intel 386 Programmers' Manual: https://css.csail.mit.edu/6.858/2014/readings/i386.pdf
 - KVM API: https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt
