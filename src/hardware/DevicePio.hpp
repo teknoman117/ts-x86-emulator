@@ -2,6 +2,7 @@
 #define PIOOPERATIONS_HPP_
 
 #include <stdexcept>
+#include <cstdint>
 
 struct DevicePio {
     virtual ~DevicePio() = default;
