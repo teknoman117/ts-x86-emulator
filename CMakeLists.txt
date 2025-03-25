@@ -3,5 +3,4 @@ project(kvm-emulator VERSION 0.1 LANGUAGES C CXX)
 
 option(VIRTUAL_DISK "Enable a virtual C: drive" OFF)
 
-add_subdirectory(dependencies)
 add_subdirectory(src)

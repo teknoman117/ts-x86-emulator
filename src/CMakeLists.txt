@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-add_executable(kvm-emulator
+add_executable(emulator
     main.cpp
     EventLoop.cpp
     hardware/i386EXClockPrescaler.cpp
@@ -11,6 +11,6 @@ add_executable(kvm-emulator
     hardware/DS12887.cpp
 )
 
-target_compile_definitions(kvm-emulator PRIVATE
+target_compile_definitions(emulator PRIVATE
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>
 )
