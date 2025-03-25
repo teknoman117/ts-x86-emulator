@@ -25,10 +25,6 @@
 #define HIGH_MEMORY_SIZE (0)
 #define LOW_MEMORY_SIZE (0x70000)
 
-#ifdef DISASSEMBLE
-#include <Zydis/Zydis.h>
-#endif
-
 #define PAGE_SIZE 4096
 
 typedef void (*io_handler_t)(bool is_write, uint16_t addr, void* data, size_t length, size_t count);
@@ -582,19 +578,6 @@ int main (int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-#ifdef DISASSEMBLE
-    // enable single stepping
-    struct kvm_guest_debug debug = {
-        .control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP
-    };
-
-    ret = ioctl(vcpuFd, KVM_SET_GUEST_DEBUG, &debug);
-    if (ret == -1) {
-        perror("KVM_SET_GUEST_DEBUG");
-        return EXIT_FAILURE;
-    }
-#endif /* NDEBUG */
-
     EventLoop deviceEventLoop;
 
     // -------------------- DEVICES ----------------------
@@ -654,16 +637,6 @@ int main (int argc, char** argv) {
     auto rtc = std::make_shared<DS12887>();
     pioDeviceTable.emplace(AddressRange{0x70, 0x02}, rtc);
 
-#ifdef DISASSEMBLE
-    // setup a disassembly library
-    ZydisDecoder decoderReal, decoderP16, decoderP32;
-    ZydisDecoderInit(&decoderReal, ZYDIS_MACHINE_MODE_REAL_16,   ZYDIS_ADDRESS_WIDTH_16);
-    ZydisDecoderInit(&decoderP16,  ZYDIS_MACHINE_MODE_LEGACY_16, ZYDIS_ADDRESS_WIDTH_16);
-    ZydisDecoderInit(&decoderP32,  ZYDIS_MACHINE_MODE_LEGACY_32, ZYDIS_ADDRESS_WIDTH_32);
-    ZydisFormatter formatter;
-    ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
-#endif /* NDEBUG */
-
     // signals
     signal(SIGINT, sigintHandler);
 
@@ -680,89 +653,6 @@ int main (int argc, char** argv) {
                 break;
             }
         }
-
-#ifdef DISASSEMBLE
-        // get the register state
-        memset(&regs, 0, sizeof regs);
-        memset(&sregs, 0, sizeof sregs);
-        ioctl(vcpuFd, KVM_GET_REGS, &regs);
-        ioctl(vcpuFd, KVM_GET_SREGS, &sregs);
-
-        if (!previousWasDebug || vcpuRun->exit_reason == KVM_EXIT_DEBUG) {
-            // figure out the memory region the instruction pointer is in
-            ZyanUSize ip = sregs.cs.base + regs.rip;
-            ZyanUSize offset = 0;
-            ZyanUSize length = 0;
-            uint8_t* codeBuffer = NULL;
-            if (ip < 0xA0000) {
-                codeBuffer = ram;
-                offset = ip;
-                length = 0xA0000 - offset;
-            }
-#if 0
-            else if (ip >= 0xC0000 && ip < 0xC8000) {
-                codeBuffer = vgaRom;
-                offset = ip & 0x7FFF;
-                length = 0x8000 - ip;
-            }
-#endif
-            else if (ip >= 0xC8000 && ip < 0xCA000) {
-                codeBuffer = optionRom;
-                offset = ip & 0x1FFF;
-                length = 0x2000 - ip;
-            } else if (ip >= 0xE0000 && ip < 0xF0000) {
-                codeBuffer = flashMemory + 0x60000;
-                offset = ip & 0xFFFF;
-                length = 0x10000 - ip;
-            } else if (ip >= 0xF0000 && ip < 0x100000) {
-                codeBuffer = flashMemory + 0x70000;
-                offset = ip & 0xFFFF;
-                length = 0x10000 - ip;
-            } else if (ip >= 0x3400000 && ip <= 0x34FFFFF) {
-                codeBuffer = flashMemory;
-                offset = ip & 0x7FFFF;
-                length = 0x80000 - offset;
-            }
-
-            ZydisDecodedInstruction instruction;
-            int count = 8;
-            fprintf(stderr, "--- next instructions ---\n");
-            while (count--) {
-                if (sregs.cr0 & 1) {
-                    // protected mode
-                    if (sregs.cs.db) {
-                        // 32-bit protected mode
-                        if (!ZYAN_SUCCESS(ZydisDecoderDecodeBuffer(&decoderP32, codeBuffer + offset, length, &instruction))) {
-                            break;
-                        }
-                        fprintf(stderr, "[%08llx:%08llx]  ", sregs.cs.base, ip - sregs.cs.base);
-                    } else {
-                        // 16-bit protected mode
-                        if (!ZYAN_SUCCESS(ZydisDecoderDecodeBuffer(&decoderP16, codeBuffer + offset, length, &instruction))) {
-                            break;
-                        }
-                        fprintf(stderr, "[%08llx:%04llx]  ", sregs.cs.base, ip - sregs.cs.base);
-                    }
-                } else {
-                    // real mode
-                    if (!ZYAN_SUCCESS(ZydisDecoderDecodeBuffer(&decoderReal, codeBuffer + offset, length, &instruction))) {
-                        break;
-                    }
-                    fprintf(stderr, "[%08llx:%04llx]  ", sregs.cs.base, ip - sregs.cs.base);
-                }
-
-                char buffer[256];
-                ZydisFormatterFormatInstruction(&formatter, &instruction, buffer, sizeof buffer, regs.rip);
-                fprintf(stderr, "%s\n", buffer);
-                offset += instruction.length;
-                ip += instruction.length;
-                length -= instruction.length;
-            }
-            fprintf(stderr, "--- ----------------- ---\n");
-        } else {
-            previousWasDebug = false;
-        }
-#endif /* NDEBUG */
 
         switch (vcpuRun->exit_reason) {
             case KVM_EXIT_HLT:
@@ -887,9 +777,9 @@ int main (int argc, char** argv) {
                         ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
                     }   
                 }*/
-#if (defined VIRTUAL_DISK)
+
                 // the flash disk is being accessed
-                if (vcpuRun->mmio.phys_addr >= 0x3400000 && vcpuRun->mmio.phys_addr < 0x350000) {
+                if (vcpuRun->mmio.phys_addr >= 0x3400000 && vcpuRun->mmio.phys_addr < 0x3500000) {
                     off_t offset = vcpuRun->mmio.phys_addr & 0x7FFFF;
                     bool unmapFlash = false;
                     bool mapFlash = false;
@@ -975,33 +865,30 @@ int main (int argc, char** argv) {
                         }
                     }
                 } else {
-#endif
-#if !(defined NDEBUG)
-                fprintf(stderr, "unhandled mmio exit: %s addr:%016llx length:%d ",
-                    vcpuRun->mmio.is_write ? "write" : "read",
-                    vcpuRun->mmio.phys_addr,
-                    vcpuRun->mmio.len);
-#endif
-                if (vcpuRun->mmio.is_write) {
-#if !(defined NDEBUG)
-                    if (vcpuRun->mmio.len == 1)
-                        fprintf(stderr, "data:%02x\n", *((uint8_t*) vcpuRun->mmio.data));
-                    else if (vcpuRun->mmio.len == 2)
-                        fprintf(stderr, "data:%04x\n", *((uint16_t*) vcpuRun->mmio.data));
-                    else if (vcpuRun->mmio.len == 4)
-                        fprintf(stderr, "data:%08x\n", *((uint32_t*) vcpuRun->mmio.data));
-                    else if (vcpuRun->mmio.len == 8)
-                        fprintf(stderr, "data:%16lx\n", *((uint64_t*) vcpuRun->mmio.data));
-#endif
-                } else {
-#if !(defined NDEBUG)
-                    fprintf(stderr, "\n");
-#endif
-                    memset(vcpuRun->mmio.data, 0, sizeof vcpuRun->mmio.data);
+    #if !(defined NDEBUG)
+                    fprintf(stderr, "unhandled mmio exit: %s addr:%016llx length:%d ",
+                        vcpuRun->mmio.is_write ? "write" : "read",
+                        vcpuRun->mmio.phys_addr,
+                        vcpuRun->mmio.len);
+    #endif
+                    if (vcpuRun->mmio.is_write) {
+    #if !(defined NDEBUG)
+                        if (vcpuRun->mmio.len == 1)
+                            fprintf(stderr, "data:%02x\n", *((uint8_t*) vcpuRun->mmio.data));
+                        else if (vcpuRun->mmio.len == 2)
+                            fprintf(stderr, "data:%04x\n", *((uint16_t*) vcpuRun->mmio.data));
+                        else if (vcpuRun->mmio.len == 4)
+                            fprintf(stderr, "data:%08x\n", *((uint32_t*) vcpuRun->mmio.data));
+                        else if (vcpuRun->mmio.len == 8)
+                            fprintf(stderr, "data:%16lx\n", *((uint64_t*) vcpuRun->mmio.data));
+    #endif
+                    } else {
+    #if !(defined NDEBUG)
+                        fprintf(stderr, "\n");
+    #endif
+                        memset(vcpuRun->mmio.data, 0, sizeof vcpuRun->mmio.data);
+                    }
                 }
-#if (defined VIRTUAL_DISK)
-                }
-#endif
                 break;
 
             default:

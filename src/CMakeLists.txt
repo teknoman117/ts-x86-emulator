@@ -11,9 +11,6 @@ add_executable(kvm-emulator
     hardware/DS12887.cpp
 )
 
-target_link_libraries(kvm-emulator PRIVATE Zydis)
-
 target_compile_definitions(kvm-emulator PRIVATE
-    $<$<BOOL:${DISASSEMBLE}>:DISASSEMBLE>
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>
 )
