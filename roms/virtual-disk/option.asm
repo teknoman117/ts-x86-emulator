@@ -185,9 +185,9 @@ int13h_handler:
     ; bits [15:8] = head count = 1 (255 heads here)
     ; bits [7:0] = drive count (1 drive here)
     mov dx, 0xfe01
-    ; bits [15:6] = cylinder count - 1 (8 cylinders here)
+    ; bits [15:8] = cylinder count - 1 (16 cylinders here)
     ; bits [5:0] = sectors/track count (63 sectors/track)
-    mov cx, 0x073f
+    mov cx, 0x1f3f
 
     ; no error (clear CF, zero AH)
     xor ah, ah

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.29)
 
 add_executable(emulator
     main.cpp
@@ -14,3 +14,5 @@ add_executable(emulator
 target_compile_definitions(emulator PRIVATE
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>
 )
+
+add_dependencies(emulator roms)
