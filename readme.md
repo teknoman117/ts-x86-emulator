@@ -1,7 +1,7 @@
-KVM Emulator for the Technologic Systems TS-3100
-================================================
+Emulator for Technologic Systems x86 Single Board Computers
+===========================================================
 
-Disclaimer: I have absolutely no connection with this company, this project is purely as a hobby project.
+Disclaimer: I have absolutely no connection with this company, this is purely a hobby project.
 
 The TS-3100 is an (at the time) low cost single board computer from late 2001 made by Technologic Systems (https://www.embeddedts.com/).
 
@@ -9,12 +9,13 @@ Dependencies
 ------------
 - mtools
 - nasm
+- minicom
 
 Usage
 -----
 <pre>
 # Fetch and build emulator
-git clone https://github.com/teknoman117/ts-3100-emulator
+git clone https://github.com/teknoman117/ts-x86-emulator
 cd ts-3100-emulator
 cmake -DCMAKE_BUILD_TYPE=Release -B build .
 cmake --build build -j
