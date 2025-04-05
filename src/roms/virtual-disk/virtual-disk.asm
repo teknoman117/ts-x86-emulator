@@ -499,6 +499,3 @@ vdisk_drivenum:      db 0x00
 rom_message:         db 13, 10, "-= Virtual Disk Driver =-", 13, 10
                      db "v0.0.1 (2020-05-06)", 13, 10
                      db "Released under GNU GPL v2", 13, 10, 0
-
-;times 8191-($-$$) db 0x00
-;    db 0x00 ; checksum

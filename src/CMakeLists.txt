@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 
+add_subdirectory(roms)
+
 add_executable(emulator
     main.cpp
     EventLoop.cpp
@@ -15,4 +17,4 @@ target_compile_definitions(emulator PRIVATE
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>
 )
 
-add_dependencies(emulator roms)
+add_dependencies(emulator roms virtual-disk)
