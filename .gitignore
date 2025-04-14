@@ -1,7 +1,3 @@
 build
+roms
 .vscode
-.download
-roms/drivec.img
-roms/flash.bin
-roms/cmos.bin
-*.zst

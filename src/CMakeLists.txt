@@ -13,8 +13,12 @@ add_executable(emulator
     hardware/DS12887.cpp
 )
 
+target_link_libraries(emulator PRIVATE log4cxx uvw::uvw)
+
 target_compile_definitions(emulator PRIVATE
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>
 )
+
+target_compile_features(emulator PRIVATE cxx_std_17)
 
 add_dependencies(emulator roms virtual-disk)

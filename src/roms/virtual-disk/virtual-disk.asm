@@ -499,3 +499,6 @@ vdisk_drivenum:      db 0x00
 rom_message:         db 13, 10, "-= Virtual Disk Driver =-", 13, 10
                      db "v0.0.1 (2020-05-06)", 13, 10
                      db "Released under GNU GPL v2", 13, 10, 0
+
+; hack to make the file >4 KiB, fix eventually
+times 4096 db 0
