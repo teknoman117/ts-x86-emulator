@@ -51,6 +51,8 @@ add_custom_command(
     OUTPUT
         ${TS_3100_FLASH_IMAGE}
     COMMAND
+        ${CMAKE_COMMAND} -E make_directory ${ROM_BASE}
+    COMMAND
         ${CMAKE_COMMAND} -E cat
             ${TS_3100_FLASH_IMAGE_SOURCES}
             > ${TS_3100_FLASH_IMAGE}
@@ -73,6 +75,8 @@ math(EXPR PARTITION_SECTORS "${TOTAL_SECTORS} - 64")
 add_custom_command(
     OUTPUT
         ${TS_3100_DISK_IMAGE}
+    COMMAND
+        ${CMAKE_COMMAND} -E make_directory ${DISK_BASE}
     COMMAND
         ${CMAKE_COMMAND} -E echo \"drive c: file=\\\"${TS_3100_DISK_IMAGE}\\\" partition=1\"
             > ${PROJECT_BINARY_DIR}/ts-3100.conf
