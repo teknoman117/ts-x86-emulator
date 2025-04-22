@@ -28,3 +28,11 @@ FetchContent_Declare(
     GIT_TAG        v3.4.0_libuv_v1.48
 )
 FetchContent_MakeAvailable(uvw)
+
+# Fetch CLI11
+FetchContent_Declare(
+    CLI11
+    GIT_REPOSITORY https://github.com/CLIUtils/CLI11
+    GIT_TAG        v2.5.0
+)
+FetchContent_MakeAvailable(CLI11)

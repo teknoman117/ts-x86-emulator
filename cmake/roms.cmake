@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.28)
 
 include(FetchContent)
 
+set(ROM_BASE "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/roms")
+set(DISK_BASE "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/disks")
+
 # TS-3x00 DOS
 FetchContent_Declare(
     TS_3X00_DOS
@@ -36,9 +39,7 @@ FetchContent_MakeAvailable(
 )
 
 # Generate TS-3100 Flash Image
-set(TS_3100_FLASH_IMAGE
-    "${PROJECT_BINARY_DIR}/roms/ts-3100.bin"
-)
+set(TS_3100_FLASH_IMAGE "${ROM_BASE}/ts-3100.bin")
 
 set(TS_3100_FLASH_IMAGE_SOURCES
     "${ts_3100_disk_SOURCE_DIR}/3100DISK.BIN"
@@ -59,9 +60,7 @@ add_custom_command(
 
 
 # Generate TS-3100 Virtual Disk
-set(TS_3100_DISK_IMAGE
-    "${PROJECT_BINARY_DIR}/roms/ts-3100-disk.img"
-)
+set(TS_3100_DISK_IMAGE "${DISK_BASE}/ts-3100.img")
 
 set(CYLINDERS 32)
 set(HEADS 255)
