@@ -16,10 +16,10 @@ Usage
 <pre>
 # Fetch and build emulator
 git clone https://github.com/teknoman117/ts-x86-emulator
-cd ts-3100-emulator
-cmake -DCMAKE_BUILD_TYPE=Release -B build .
+cd ts-x86-emulator
+cmake -DCMAKE_BUILD_TYPE=Release -G Ninja -B build .
 cmake --build build -j
-build/src/emulator
+build/bin/ts-x86-emulator
 
 # In another terminal, connect to virtual COM2 port
 minicom -D unix\#/tmp/3100.com2.socket
