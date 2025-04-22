@@ -1,0 +1,19 @@
+#ifndef INSTALL_CONFIG_HPP
+#define INSTALL_CONFIG_HPP
+
+#include <log4cxx/logger.h>
+
+#include <filesystem>
+#include <string>
+
+using LoggerPtr = log4cxx::LoggerPtr;
+ 
+extern auto getLogger(const std::string& name = std::string()) -> LoggerPtr;
+
+namespace Config::Install {
+    constexpr std::string ProjectName() { return "@PROJECT_NAME@"; }
+    constexpr std::string BinaryDirectory() { return "@CMAKE_INSTALL_BINDIR@"; };
+    constexpr std::string DataDirectory() { return "@CMAKE_INSTALL_DATADIR@/@PROJECT_NAME@"; };
+} // namespace Config::Install
+
+#endif /* INSTALL_CONFIG_HPP */

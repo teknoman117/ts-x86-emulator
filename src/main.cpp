@@ -21,6 +21,13 @@
 #include "hardware/HexDisplay.hpp"
 #include "hardware/DS12887.hpp"
 
+#include "Config.hpp"
+
+#include <filesystem>
+#include <format>
+
+#include <CLI/CLI.hpp>
+
 //#define HIGH_MEMORY_SIZE (0x100000)
 #define HIGH_MEMORY_SIZE (0)
 #define LOW_MEMORY_SIZE (0x70000)
@@ -221,8 +228,15 @@ std::map<AddressRange, io_handler_t> ioHandlerTable = {
     { { 0xF870, 0x01 }, handlerPort3Pin },
 };
 
+void parseOptions(int argc, char** argv) {
+    std::cout << "install data path: " << Config::GetInstallDataPath() << std::endl;
+    std::cout << "user data path: " << *Config::GetLocalDataPath() << std::endl;
+}
+
 int main (int argc, char** argv) {
     assert(PAGE_SIZE == getpagesize());
+
+    parseOptions(argc, argv);
 
     // open the kvm handle
     int kvmFd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
@@ -260,7 +274,8 @@ int main (int argc, char** argv) {
 
     // ----------------------- MEMORY MAP CREATION ----------------------------------
     // open rom image
-    int romFd = open("roms/flash.bin", O_RDWR | O_CLOEXEC);
+    auto romPath = Config::GetInstallDataPath() / "roms/ts-3100.bin";
+    int romFd = open(romPath.c_str(), O_RDWR | O_CLOEXEC);
     if (romFd == -1) {
         perror("unable to open the rom.");
         return EXIT_FAILURE;
@@ -277,7 +292,8 @@ int main (int argc, char** argv) {
 
 #if (defined VIRTUAL_DISK)
     // open disk option rom
-    int optionFd = open("roms/virtual-disk/option.rom", O_RDONLY | O_CLOEXEC);
+    auto virtualDiskRomPath = Config::GetInstallDataPath() / "roms/virtual-disk.rom";
+    int optionFd = open(virtualDiskRomPath.c_str(), O_RDONLY | O_CLOEXEC);
     if (optionFd == -1) {
         perror("unable to open option rom.");
         return EXIT_FAILURE;
@@ -306,7 +322,8 @@ int main (int argc, char** argv) {
     close(optionFd);
 
     // open disk image
-    int diskFd = open("roms/drivec.img", O_RDWR | O_CLOEXEC);
+    auto diskPath = Config::GetInstallDataPath() / "disks/ts-3100.img";
+    int diskFd = open(diskPath.c_str(), O_RDWR | O_CLOEXEC);
     if (diskFd == -1) {
         perror("Unable to open disk image.");
         return EXIT_FAILURE;
