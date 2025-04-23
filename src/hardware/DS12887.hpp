@@ -5,6 +5,8 @@
 
 #include <array>
 
+#include "MachineConfig.hpp"
+
 class DS12887 : public DevicePio
 {
     enum class Register : uint8_t {
@@ -59,13 +61,14 @@ class DS12887 : public DevicePio
 
     Register selectedRegister;
     std::array<uint8_t, 114> ram;
+    std::filesystem::path cmosPath;
 
 public:
-    DS12887();
+    DS12887(const MachineConfig& config);
     DS12887(const DS12887&) = delete;
     DS12887(DS12887&&) = delete;
 
-    virtual ~DS12887();
+    virtual ~DS12887() = default;
 
     DS12887& operator=(const DS12887&) = delete;
     DS12887& operator=(DS12887&&) = delete;

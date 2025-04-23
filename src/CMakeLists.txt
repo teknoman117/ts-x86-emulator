@@ -23,7 +23,10 @@ target_compile_definitions(emulator PRIVATE
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>
 )
 
-target_include_directories(emulator PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
+target_include_directories(emulator PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+)
 
 target_compile_features(emulator PRIVATE cxx_std_20)
 

@@ -88,4 +88,8 @@ namespace Config {
     const std::optional<Path>& GetLocalDataPath() {
         return runtimePaths.getUserDataPath();
     }
+
+    const std::filesystem::path GetRomPath(const std::string& name) {
+        return GetInstallDataPath() / "roms" / name;
+    }
 } // namespace Config

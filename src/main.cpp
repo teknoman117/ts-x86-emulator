@@ -22,11 +22,10 @@
 #include "hardware/DS12887.hpp"
 
 #include "Config.hpp"
+#include "MachineConfig.hpp"
 
 #include <filesystem>
 #include <format>
-
-#include <CLI/CLI.hpp>
 
 //#define HIGH_MEMORY_SIZE (0x100000)
 #define HIGH_MEMORY_SIZE (0)
@@ -228,15 +227,14 @@ std::map<AddressRange, io_handler_t> ioHandlerTable = {
     { { 0xF870, 0x01 }, handlerPort3Pin },
 };
 
-void parseOptions(int argc, char** argv) {
-    std::cout << "install data path: " << Config::GetInstallDataPath() << std::endl;
-    std::cout << "user data path: " << *Config::GetLocalDataPath() << std::endl;
-}
-
 int main (int argc, char** argv) {
     assert(PAGE_SIZE == getpagesize());
 
-    parseOptions(argc, argv);
+    // Load configuration
+    MachineConfig config{argc, argv};
+    if (!config.valid()) {
+        return EXIT_FAILURE;
+    }
 
     // open the kvm handle
     int kvmFd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
@@ -274,8 +272,7 @@ int main (int argc, char** argv) {
 
     // ----------------------- MEMORY MAP CREATION ----------------------------------
     // open rom image
-    auto romPath = Config::GetInstallDataPath() / "roms/ts-3100.bin";
-    int romFd = open(romPath.c_str(), O_RDWR | O_CLOEXEC);
+    int romFd = open(config.getFlashPath().c_str(), O_RDWR | O_CLOEXEC);
     if (romFd == -1) {
         perror("unable to open the rom.");
         return EXIT_FAILURE;
@@ -292,8 +289,7 @@ int main (int argc, char** argv) {
 
 #if (defined VIRTUAL_DISK)
     // open disk option rom
-    auto virtualDiskRomPath = Config::GetInstallDataPath() / "roms/virtual-disk.rom";
-    int optionFd = open(virtualDiskRomPath.c_str(), O_RDONLY | O_CLOEXEC);
+    int optionFd = open(Config::GetRomPath("virtual-disk.rom").c_str(), O_RDONLY | O_CLOEXEC);
     if (optionFd == -1) {
         perror("unable to open option rom.");
         return EXIT_FAILURE;
@@ -322,8 +318,7 @@ int main (int argc, char** argv) {
     close(optionFd);
 
     // open disk image
-    auto diskPath = Config::GetInstallDataPath() / "disks/ts-3100.img";
-    int diskFd = open(diskPath.c_str(), O_RDWR | O_CLOEXEC);
+    int diskFd = open(config.getDiskPath().c_str(), O_RDWR | O_CLOEXEC);
     if (diskFd == -1) {
         perror("Unable to open disk image.");
         return EXIT_FAILURE;
@@ -651,7 +646,7 @@ int main (int argc, char** argv) {
     }
 
     // virtual device: RTC
-    auto rtc = std::make_shared<DS12887>();
+    auto rtc = std::make_shared<DS12887>(config);
     pioDeviceTable.emplace(AddressRange{0x70, 0x02}, rtc);
 
     // signals

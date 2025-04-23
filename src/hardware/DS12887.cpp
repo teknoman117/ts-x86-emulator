@@ -3,20 +3,14 @@
 #include <fstream>
 #include <ctime>
 
-DS12887::DS12887() : registers{}, selectedRegister{}, ram{}
+DS12887::DS12887(const MachineConfig& config) : registers{}, selectedRegister{}, ram{}, cmosPath{config.getCMOSPath()}
 {
     registers.D.validRamAndTime = true;
 
-    std::ifstream nvram("roms/cmos.bin", std::ios_base::binary);
+    std::ifstream nvram(cmosPath, std::ios_base::binary);
     if (nvram.is_open()) {
         nvram.read((char *) ram.data(), ram.size());
     }
-}
-
-DS12887::~DS12887()
-{
-    std::ofstream nvram("roms/cmos.bin", std::ios_base::binary);
-    nvram.write((const char *) ram.data(), ram.size());
 }
 
 // DevicePio implementation
@@ -93,7 +87,11 @@ void DS12887::iowrite8(uint16_t address, uint8_t value)
             fprintf(stderr, "century write: %02x\n", value);
             break;
         default:
+        {
             ram[static_cast<uint8_t>(selectedRegister) - 14] = value;
+            std::ofstream nvram(cmosPath, std::ios_base::binary);
+            nvram.write((const char *) ram.data(), ram.size());
+        }
     };
 }
 

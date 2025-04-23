@@ -14,6 +14,9 @@ namespace Config {
 
     // return the user local data path
     const std::optional<std::filesystem::path>& GetLocalDataPath();
+
+    // return the path to a rom
+    const std::filesystem::path GetRomPath(const std::string& name);
 } // namespace Config
 
 #endif /* CONFIG_HPP */
