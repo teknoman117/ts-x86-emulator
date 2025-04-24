@@ -23,6 +23,7 @@
 
 #include "Config.hpp"
 #include "MachineConfig.hpp"
+#include "Logger.hpp"
 
 #include <filesystem>
 #include <format>
@@ -72,21 +73,22 @@ void handlerKeyboard(bool is_write, uint16_t addr, void* data, size_t length, si
 }
 
 void handlerUnhandled(bool is_write, uint16_t addr, void* data, size_t length, size_t count) {
-    fprintf(stderr, "unhandled io exit: %s port:%04x size:%zu count:%zu ",
+    auto message = std::format("unhandled io exit: {} port:{:#04x} size:{} count:{} ",
             is_write ? "write" : "read", addr, length, count);
     if (is_write && count == 1) {
         if (length == 1)
-            fprintf(stderr, "data:%02x\n", *reinterpret_cast<uint8_t*>(data));
+            message += std::format("data:{:#02x}\n", *reinterpret_cast<uint8_t*>(data));
         else if (length == 2)
-            fprintf(stderr, "data:%04x\n", *reinterpret_cast<uint16_t*>(data));
+            message += std::format("data:{:#04x}\n", *reinterpret_cast<uint16_t*>(data));
         else if (length == 4)
-            fprintf(stderr, "data:%08x\n", *reinterpret_cast<uint32_t*>(data));
+            message += std::format("data:{:#08x}\n", *reinterpret_cast<uint32_t*>(data));
         else if (length == 8)
-            fprintf(stderr, "data:%16lx\n", *reinterpret_cast<uint64_t*>(data));
+            message += std::format("data:{:#016x}\n", *reinterpret_cast<uint64_t*>(data));
     } else {
-        fprintf(stderr, "\n");
         memset(data, 0, length);
     }
+
+    LOG4CXX_DEBUG(GetLogger("cpu"), message);
 }
 
 void handlerLCD(bool is_write, uint16_t addr, void* data, size_t length, size_t count) {
@@ -235,38 +237,43 @@ int main (int argc, char** argv) {
     if (!config.valid()) {
         return EXIT_FAILURE;
     }
+    ConfigureLogger(config);
+
+    auto mainLog = GetLogger("main");
+    auto vmLog = GetLogger("vm");
+    auto cpuLog = GetLogger("cpu");
 
     // open the kvm handle
     int kvmFd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
     if (kvmFd == -1) {
-        perror("unable to open the kvm endpoint.");
+        LOG4CXX_ERROR(mainLog, "unable to open the kvm endpoint: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     // check for a if the KVM API is new enough (== 12)
     int ret = ioctl(kvmFd, KVM_GET_API_VERSION, NULL);
     if (ret == -1) {
-        perror("KVM_GET_API_VERSION");
+        LOG4CXX_ERROR(mainLog, "KVM_GET_API_VERSION: " << strerror(errno));
         return EXIT_FAILURE;
     } else if (ret != 12) {
-        fprintf(stderr, "KVM_GET_API_VERSION %d, expected 12\n", ret);
+        LOG4CXX_ERROR(mainLog, "KVM_GET_API_VERSION " << ret << ", expected 12");
         return EXIT_FAILURE;
     }
 
     // check for required extensions
     ret = ioctl(kvmFd, KVM_CHECK_EXTENSION, KVM_CAP_USER_MEMORY);
     if (ret == -1) {
-        perror("KVM_CHECK_EXTENSION");
+        LOG4CXX_ERROR(mainLog, "KVM_CHECK_EXTENSION: " << strerror(errno));
         return EXIT_FAILURE;
     } else if (!ret) {
-        fprintf(stderr, "Required extension KVM_CAP_USER_MEMORY not available.\n");
+        LOG4CXX_ERROR(mainLog, "Required extension KVM_CAP_USER_MEMORY not available.");
         return EXIT_FAILURE;
     }
 
     // create a virtual machine handle
     int vmFd = ioctl(kvmFd, KVM_CREATE_VM, (unsigned long) 0);
     if (vmFd == -1) {
-        perror("KVM_CREATE_VM");
+        LOG4CXX_ERROR(mainLog, "KVM_CREATE_VM: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -274,7 +281,7 @@ int main (int argc, char** argv) {
     // open rom image
     int romFd = open(config.getFlashPath().c_str(), O_RDWR | O_CLOEXEC);
     if (romFd == -1) {
-        perror("unable to open the rom.");
+        LOG4CXX_ERROR(mainLog, "unable to open the rom: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -282,7 +289,7 @@ int main (int argc, char** argv) {
     uint8_t* flashMemory = (uint8_t*)
             mmap(NULL, 0x80000, PROT_READ | PROT_WRITE, MAP_SHARED, romFd, 0);
     if (flashMemory == (uint8_t*) -1) {
-        perror("Unable to mmap an anonymous page.");
+        LOG4CXX_ERROR(mainLog, "Unable to mmap an anonymous page: " << strerror(errno));
         return EXIT_FAILURE;
     }
     close(romFd);
@@ -291,7 +298,7 @@ int main (int argc, char** argv) {
     // open disk option rom
     int optionFd = open(Config::GetRomPath("virtual-disk.rom").c_str(), O_RDONLY | O_CLOEXEC);
     if (optionFd == -1) {
-        perror("unable to open option rom.");
+        LOG4CXX_ERROR(mainLog, "unable to open option rom: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -300,7 +307,7 @@ int main (int argc, char** argv) {
     /*uint8_t* optionRom = (uint8_t*)
             mmap(NULL, 0x2000, PROT_READ, MAP_SHARED, optionFd, 0);
     if (optionRom == (uint8_t*) -1) {
-        perror("Unable to mmap an anonymous page.");
+        LOG4CXX_ERROR(mainLog, "Unable to mmap an anonymous page: " << strerror(errno));
         return EXIT_FAILURE;
     }
     close(optionFd);*/
@@ -308,11 +315,11 @@ int main (int argc, char** argv) {
     uint8_t* optionRom = (uint8_t*)
             mmap(NULL, 0x2000, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (optionRom == (uint8_t*) -1) {
-        perror("Unable to mmap an anonymous page.");
+        LOG4CXX_ERROR(mainLog, "Unable to mmap an anonymous page: " << strerror(errno));
         return EXIT_FAILURE;
     }
     if (read(optionFd, optionRom, 0x2000) != 0x2000) {
-        fprintf(stderr, "failed to read 8 KiB from option rom file.\n");
+        LOG4CXX_ERROR(mainLog, "failed to read 8 KiB from option rom file.");
         return EXIT_FAILURE;
     }
     close(optionFd);
@@ -320,7 +327,7 @@ int main (int argc, char** argv) {
     // open disk image
     int diskFd = open(config.getDiskPath().c_str(), O_RDWR | O_CLOEXEC);
     if (diskFd == -1) {
-        perror("Unable to open disk image.");
+        LOG4CXX_ERROR(mainLog, "Unable to open disk image: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -331,25 +338,9 @@ int main (int argc, char** argv) {
     uint8_t* ram = (uint8_t*) mmap(NULL, LOW_MEMORY_SIZE + HIGH_MEMORY_SIZE, 
             PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (ram == (uint8_t*) -1) {
-        perror("Unable to mmap an anonymous page for lowmem.");
+        LOG4CXX_ERROR(mainLog, "Unable to mmap an anonymous page for lowmem: " << strerror(errno));
         return EXIT_FAILURE;
     }
-
-#if 0
-    int vgaFd = open("roms/vga.bin", O_RDONLY | O_CLOEXEC);
-    if (vgaFd == -1) {
-        perror("unable to open vga rom.");
-        return EXIT_FAILURE;
-    }
-
-    uint8_t* vgaRom = (uint8_t*)
-            mmap(NULL, 0x8000, PROT_READ, MAP_SHARED, vgaFd, 0);
-    if (vgaRom == (uint8_t*) -1) {
-        perror("Unable to mmap an anonymous page.");
-        return EXIT_FAILURE;
-    }
-    close(vgaFd);
-#endif
 
     struct kvm_userspace_memory_region regionRam = {
         .slot = 0,
@@ -464,19 +455,19 @@ int main (int argc, char** argv) {
 
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRam);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRomDos);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionBios);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -484,33 +475,33 @@ int main (int argc, char** argv) {
     // wrap is disabled (a20 line enabled) by default on 386EX
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRamWrapHighMem);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 #endif
 
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlash);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlashAlias);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
 #if (defined VIRTUAL_DISK)
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionOptionRom);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionOptionRom_Boot);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 #endif
@@ -518,7 +509,7 @@ int main (int argc, char** argv) {
 #if 0
     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionVGARom);
     if (ret == -1) {
-        perror("KVM_SET_USER_MEMORY_REGION");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
         return EXIT_FAILURE;
     }
 #endif
@@ -526,41 +517,41 @@ int main (int argc, char** argv) {
 
     ret = ioctl(vmFd, KVM_CREATE_IRQCHIP);
     if (ret == -1) {
-        perror("KVM_CREATE_IRQCHIP");
+        LOG4CXX_ERROR(vmLog, "KVM_CREATE_IRQCHIP: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     struct kvm_pit_config configurationPIT = { .flags = KVM_PIT_SPEAKER_DUMMY };
     ret = ioctl(vmFd, KVM_CREATE_PIT2, &configurationPIT);
     if (ret == -1) {
-        perror("KVM_CREATE_PIT2");
+        LOG4CXX_ERROR(vmLog, "KVM_CREATE_PIT2: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     // create a virtual cpu for the vm
     int vcpuFd = ioctl(vmFd, KVM_CREATE_VCPU, (unsigned long) 0);
     if (vcpuFd == -1) {
-        perror("Failed to create virtual CPU.");
+        LOG4CXX_ERROR(vmLog, "Failed to create virtual CPU.: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     ret = ioctl(kvmFd, KVM_GET_VCPU_MMAP_SIZE, NULL);
     if (ret == -1) {
-        perror("KVM_GET_VCPU_MMAP_SIZE");
+        LOG4CXX_ERROR(vmLog, "KVM_GET_VCPU_MMAP_SIZE: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     struct kvm_run* vcpuRun = (struct kvm_run*)
             mmap(NULL, ret, PROT_READ | PROT_WRITE, MAP_SHARED, vcpuFd, 0);
     if (vcpuRun == (struct kvm_run*) -1) {
-        perror("Unable to map vcpu run structure.");
+        LOG4CXX_ERROR(vmLog, "Unable to map vcpu run structure.: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     struct kvm_coalesced_mmio_ring* ring = NULL;
     ret = ioctl(kvmFd, KVM_CHECK_EXTENSION, KVM_CAP_COALESCED_MMIO);
     if (ret == -1) {
-        perror("KVM_CHECK_EXTENSION");
+        LOG4CXX_ERROR(vmLog, "KVM_CHECK_EXTENSION: " << strerror(errno));
     } else if (ret) {
         ring = (struct kvm_coalesced_mmio_ring*) ((uint8_t *) vcpuRun + (ret * PAGE_SIZE));
     }
@@ -570,7 +561,7 @@ int main (int argc, char** argv) {
     memset(&sregs, 0, sizeof sregs);
     ret = ioctl(vcpuFd, KVM_GET_SREGS, &sregs);
     if (ret == -1) {
-        perror("KVM_GET_SREGS");
+        LOG4CXX_ERROR(vmLog, "KVM_GET_SREGS: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -579,14 +570,14 @@ int main (int argc, char** argv) {
     sregs.cs.selector = 0xF000;
     ret = ioctl(vcpuFd, KVM_SET_SREGS, &sregs);
     if (ret == -1) {
-        perror("KVM_SET_SREGS");
+        LOG4CXX_ERROR(vmLog, "KVM_SET_SREGS: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
     struct kvm_regs regs = { .rip = 0x0000FFF0 };
     ret = ioctl(vcpuFd, KVM_SET_REGS, &regs);
     if (ret == -1) {
-        perror("KVM_GET_REGS");
+        LOG4CXX_ERROR(vmLog, "KVM_GET_REGS: " << strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -708,7 +699,7 @@ int main (int argc, char** argv) {
                     // or wrapping the lower memory
                     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRamWrapDisabled);
                     if (ret == -1) {
-                        perror("KVM_SET_USER_MEMORY_REGION");
+                        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
                         return EXIT_FAILURE;
                     }
 #endif
@@ -719,13 +710,13 @@ int main (int argc, char** argv) {
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRamWrapDisabled);
 #endif
                         if (ret == -1) {
-                            perror("KVM_SET_USER_MEMORY_REGION");
+                            LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
                             return EXIT_FAILURE;
                         }
                     } else {
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRamWrap);
                         if (ret == -1) {
-                            perror("KVM_SET_USER_MEMORY_REGION");
+                            LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
                             return EXIT_FAILURE;
                         }
                     }
@@ -738,12 +729,12 @@ int main (int argc, char** argv) {
                     // unmap existing data
                     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionOptionRom_Unmap);
                     if (ret == -1) {
-                        perror("KVM_SET_USER_MEMORY_REGION (unmap disk)");
+                        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (unmap disk): " << strerror(errno));
                         return EXIT_FAILURE;
                     }
 
                     if (munmap(diskData, PAGE_SIZE) == -1) {
-                        perror("failed to unmap old disk data");
+                        LOG4CXX_ERROR(vmLog, "failed to unmap old disk data: " << strerror(errno));
                         return EXIT_FAILURE;
                     }
 
@@ -751,7 +742,7 @@ int main (int argc, char** argv) {
                     diskData = (uint8_t*) mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_WRITE,
                             MAP_SHARED, diskFd, (off_t) selectedDiskLBA * 512);
                     if (diskData == (uint8_t*) -1) {
-                        perror("failed to mmap disk data");
+                        LOG4CXX_ERROR(vmLog, "failed to mmap disk data: " << strerror(errno));
                         return EXIT_FAILURE;
                     }
 
@@ -769,7 +760,7 @@ int main (int argc, char** argv) {
                     regionOptionRom_Disk.userspace_addr = (uint64_t) diskData;
                     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionOptionRom_Disk);
                     if (ret == -1) {
-                        perror("KVM_SET_USER_MEMORY_REGION (map disk)");
+                        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (map disk): " << strerror(errno));
                         return EXIT_FAILURE;
                     }
                     updateDiskMapping = false;
@@ -855,30 +846,30 @@ int main (int argc, char** argv) {
                         // unmap the flash memory (to control reads)
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlash_Unmap);
                         if (ret == -1) {
-                            perror("KVM_SET_USER_MEMORY_REGION (unmap flash)");
+                            LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (unmap flash): " << strerror(errno));
                             return EXIT_FAILURE;
                         }
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlashAlias_Unmap);
                         if (ret == -1) {
-                            perror("KVM_SET_USER_MEMORY_REGION (unmap flash alias)");
+                            LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (unmap flash alias): " << strerror(errno));
                             return EXIT_FAILURE;
                         }
                     } else if (mapFlash) {
                         // map the flash memory
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlash);
                         if (ret == -1) {
-                            perror("KVM_SET_USER_MEMORY_REGION (map flash)");
+                            LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (map flash): " << strerror(errno));
                             return EXIT_FAILURE;
                         }
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlashAlias);
                         if (ret == -1) {
-                            perror("KVM_SET_USER_MEMORY_REGION (map flash alias)");
+                            LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (map flash alias): " << strerror(errno));
                             return EXIT_FAILURE;
                         }
                     }
-                } else {
+                } else {                 
     #if !(defined NDEBUG)
-                    fprintf(stderr, "unhandled mmio exit: %s addr:%016llx length:%d ",
+                    auto message = std::format("unhandled mmio exit: {} addr:{:#08x} length:{} ",
                         vcpuRun->mmio.is_write ? "write" : "read",
                         vcpuRun->mmio.phys_addr,
                         vcpuRun->mmio.len);
@@ -886,25 +877,23 @@ int main (int argc, char** argv) {
                     if (vcpuRun->mmio.is_write) {
     #if !(defined NDEBUG)
                         if (vcpuRun->mmio.len == 1)
-                            fprintf(stderr, "data:%02x\n", *((uint8_t*) vcpuRun->mmio.data));
+                            message += std::format("data:{:#02x}", *reinterpret_cast<uint8_t*>(vcpuRun->mmio.data));
                         else if (vcpuRun->mmio.len == 2)
-                            fprintf(stderr, "data:%04x\n", *((uint16_t*) vcpuRun->mmio.data));
+                            message += std::format("data:{:#04x}", *reinterpret_cast<uint16_t*>(vcpuRun->mmio.data));
                         else if (vcpuRun->mmio.len == 4)
-                            fprintf(stderr, "data:%08x\n", *((uint32_t*) vcpuRun->mmio.data));
-                        else if (vcpuRun->mmio.len == 8)
-                            fprintf(stderr, "data:%16lx\n", *((uint64_t*) vcpuRun->mmio.data));
+                            message += std::format("data:{:#08x}", *reinterpret_cast<uint32_t*>(vcpuRun->mmio.data));
     #endif
                     } else {
-    #if !(defined NDEBUG)
-                        fprintf(stderr, "\n");
-    #endif
                         memset(vcpuRun->mmio.data, 0, sizeof vcpuRun->mmio.data);
                     }
+    #if !(defined NDEBUG)
+                    LOG4CXX_DEBUG(cpuLog, message);
+    #endif
                 }
                 break;
 
             default:
-                fprintf(stderr, "unhandled exit: %u\n", vcpuRun->exit_reason);
+                LOG4CXX_DEBUG(cpuLog, "unhandled exit: " << vcpuRun->exit_reason);
                 return EXIT_FAILURE;
         }
 

@@ -4,6 +4,10 @@
 #include <format>
 #include <optional>
 
+extern "C" {
+    #include <unistd.h>
+}
+
 #include "InstallConfig.hpp"
 
 using Path = std::filesystem::path;

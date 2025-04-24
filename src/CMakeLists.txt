@@ -9,6 +9,7 @@ add_executable(emulator
     EventLoop.cpp
     MachineConfig.cpp
     Config.cpp
+    Logger.cpp
     hardware/i386EXClockPrescaler.cpp
     hardware/ChipSelectUnit.cpp
     hardware/Timer.cpp

@@ -1,14 +1,7 @@
 #ifndef INSTALL_CONFIG_HPP
 #define INSTALL_CONFIG_HPP
 
-#include <log4cxx/logger.h>
-
-#include <filesystem>
 #include <string>
-
-using LoggerPtr = log4cxx::LoggerPtr;
- 
-extern auto getLogger(const std::string& name = std::string()) -> LoggerPtr;
 
 namespace Config::Install {
     constexpr std::string ProjectName() { return "@PROJECT_NAME@"; }
