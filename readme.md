@@ -5,6 +5,11 @@ Disclaimer: I have absolutely no connection with this company, this is purely a 
 
 The TS-3100 is an (at the time) low cost single board computer from late 2001 made by Technologic Systems (https://www.embeddedts.com/).
 
+Live Demo
+---------
+
+![demo](/assets/boot.gif)
+
 Dependencies
 ------------
 - mtools
