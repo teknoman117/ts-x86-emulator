@@ -1,23 +1,28 @@
 #include "HexDisplay.hpp"
+#include "Logger.hpp"
 
-#include <cstdio>
+#include <format>
 
 void HexDisplay::iowrite8(uint16_t address, uint8_t value)
 {
-    printf("HEX CODE (1 byte): %02x\n", value);
+    LOG4CXX_INFO(GetLogger("machine.hexdisplay"),
+            std::format("{:#02x}", value));
 }
 
 void HexDisplay::iowrite16(uint16_t address, uint16_t value)
 {
-    printf("HEX CODE (2 byte): %04x\n", value);
+    LOG4CXX_INFO(GetLogger("machine.hexdisplay"),
+            std::format("{:#04x}", value));
 }
 
 void HexDisplay::iowrite32(uint16_t address, uint32_t value)
 {
-    printf("HEX CODE (4 byte): %08x\n", value);
+    LOG4CXX_INFO(GetLogger("machine.hexdisplay"),
+            std::format("{:#08x}", value));
 }
 
 void HexDisplay::iowrite64(uint16_t address, uint64_t value)
 {
-    printf("HEX CODE (8 byte): %016lx\n", value);
+    LOG4CXX_INFO(GetLogger("machine.hexdisplay"),
+            std::format("{:#016x}", value));
 }

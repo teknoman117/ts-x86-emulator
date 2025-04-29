@@ -21,9 +21,7 @@ cmake -DCMAKE_BUILD_TYPE=Release -G Ninja -B build .
 cmake --build build -j
 build/bin/ts-x86-emulator
 
-# In another terminal, connect to virtual COM2 port
-minicom -D unix\#/tmp/3100.com2.socket
-
+# emulator will launch "minicom -D /tmp/com2.pty" in xterm
 </pre>
 
 FAQ
@@ -31,7 +29,7 @@ FAQ
 
 Q: Why is the text console so slow?
 
-A: I tried my best to emulate the experience of using the board over a serial console. It calculates the print speed from the baudrate of the serial console. running "console /p:2 /s:115200" will speed it up significantly, as the default baudrate is 9600.
+A: By default it tries to emulate experience of using the board over a serial console. It calculates the print speed from the uart's divisor register. Running "console /p:2 /s:115200" (or with any baudrate greater than ~9600) will disable throttling
 
 Q: How do I copy files to the VM?
 

@@ -1,138 +1,135 @@
 #include "Serial.hpp"
+#include "util/Lock.hpp"
 
-#include <array>
-#include <functional>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
-#include <string_view>
+#include <cstring>
 
-#include <unistd.h>
-#include <linux/kvm.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <sys/ioctl.h>
-#include <sys/fcntl.h>
-#include <sys/socket.h>
-#include <sys/timerfd.h>
-#include <sys/un.h>
-
-#define THROW_RUNTIME_ERROR(fmt) { \
-    std::ostringstream ss; \
-    ss << "[FATAL] [16450 \"" << mSocketName << "\"]: "<< fmt; \
-    throw std::runtime_error(ss.str()); \
-};
-
-#define LOG_ERROR(fmt) { \
-    std::cerr << "[ERROR] [16450 \"" << mSocketName << "\"]: "<< fmt << std::endl; \
-};
-
-#ifndef NDEBUG
-#define LOG_INFO(fmt) { \
-    std::cerr << "[INFO] [16450 \"" << mSocketName << "\"]: "<< fmt << std::endl; \
-};
-#else
-#define LOG_INFO(fmt)
-#endif
-
-
-Serial16450::Serial16450(const EventLoop& eventLoop)
-    : mEventLoop(eventLoop), mSocketName{}, mMutex{}, mGSI{},
-    mEventFlags{EPOLLIN | EPOLLOUT | EPOLLERR}, fds{}, registers{} {}
-
-Serial16450::~Serial16450()
-{
-    stop();
+extern "C" {
+    #include <pty.h>
+    #include <unistd.h>
+    #include <linux/kvm.h>
+    #include <sys/eventfd.h>
+    #include <sys/ioctl.h>
 }
 
-bool Serial16450::start(const std::string& socketName, int vmFd, uint32_t gsi)
+Serial16450::Serial16450(std::shared_ptr<uvw::loop>& loop_, const std::string& name,
+        int vmFd, uint32_t gsi_)
+    : loop{loop_}, mutex{loop->resource<uvw::mutex>()}, gsi{gsi_}, fds{}, registers{}
 {
-    stop();
+    logger = GetLogger(std::format("machine.serial.{}", name));
 
-    // create unix socket to read content
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof addr);
-    addr.sun_family = AF_UNIX;
-    mSocketName = socketName;
-    strcpy(addr.sun_path, socketName.c_str());
-    unlink(addr.sun_path);
-
-    fds.server = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fds.server == -1) {
-        LOG_ERROR("failed to create unix socket.");
-        return false;
+    // create a pty
+    ptyPath.resize(PATH_MAX + 1, 0);
+    if (openpty(&fds.pty_master, &fds.pty_slave, ptyPath.data(), nullptr, nullptr) < 0) {
+        auto msg = std::format("failed to create pty: {}", strerror(errno));
+        LOG4CXX_ERROR(logger, msg);
+        throw std::runtime_error(msg);
     }
 
-    if (bind(fds.server, (struct sockaddr*) &addr, sizeof addr) == -1) {
-        LOG_ERROR("unable to bind unix socket server.");
-        return false;
-    }
+    auto linkPath = std::format("/tmp/{}.pty", name);
+    std::filesystem::remove(linkPath);
+    std::filesystem::create_symlink(getPtyPath(), linkPath);
 
-    if (listen(fds.server, 1) == -1) {
-        LOG_ERROR("unable to listen on unix server socket");
-        return false;
-    }
+    pty = loop->resource<uvw::tty_handle>(fds.pty_master, true);
+    pty->mode(uvw::tty_handle::tty_mode::RAW);
+    pty->on<uvw::data_event>([this] (auto& event, auto& handle) {
+        // buffer data since we don't have a way of setting the read size
+        {
+            Lock lock(mutex);
+            char *data = event.data.get();
+            std::for_each(data, data + event.length, [this] (auto& p) {
+                queue.push(p);
+            });
+        }
+        handle.stop();
+
+        // kick timer to handle interrupt logic
+        if (!readTimer->active()) {
+            readTimer->start(uvw::timer_handle::time(0), uvw::timer_handle::time(0));
+        }
+    });
 
     // create timer for "rx ready"
-    fds.readTimer = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-    if (fds.readTimer == -1) {
-        LOG_ERROR("unable to create timer descriptor");
-        return false;
-    }
+    readTimer = loop->resource<uvw::timer_handle>();
+    readTimer->on<uvw::timer_event>([this] (auto& event, auto& handle) {
+        // whenever the timeout occurs for the receive timer, re-enable the read interrupts
+        bool empty = true;
+        {
+            Lock lock(mutex);
+            empty = queue.empty();
+        }
+        if (empty) {
+            pty->read();
+        } else {
+            registers.readable = true;
+            registers.readInterruptFlag = true;
+            if (registers.readInterruptEnabled) {
+                // can't fire a new interrupt unless there aren't any pending
+                if (!registers.writeInterruptEnabled || !registers.writeInterruptFlag) {
+                    LOG4CXX_TRACE(logger, "triggering interrupt (read condition)");
+                    triggerInterrupt();
+                }
+            }
+        }
+    });
+
+    readNotify = loop->resource<uvw::async_handle>();
+    readNotify->on<uvw::async_event>([this] (auto& event, auto& handle) {
+        if (!readTimer->active()) {
+            uvw::timer_handle::time delay((1600ULL * registers.divisor) / 18432ULL);
+            readTimer->start(delay, uvw::timer_handle::time(0));
+        }
+    });
 
     // create timer for "tx ready"
-    fds.writeTimer = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-    if (fds.writeTimer == -1) {
-        LOG_ERROR("unable to create timer descriptor");
-        return false;
-    }
+    writeTimer = loop->resource<uvw::timer_handle>();
+    writeTimer->on<uvw::timer_event>([this] (auto& event, auto& handle) {
+        // whenever the timeout occurs for the send timer, re-enable the write interrupts
+        registers.writable = true;
+        registers.writeInterruptFlag = true;
+        if (registers.writeInterruptEnabled) {
+            // can't fire a new interrupt unless there aren't any pending
+            if (!registers.readInterruptEnabled || !registers.readInterruptFlag) {
+                LOG4CXX_TRACE(logger, "triggering interrupt (write ready condition)");
+                triggerInterrupt();
+            }
+        }
+    });
 
-    // create interrupts
+    writeNotify = loop->resource<uvw::async_handle>();
+    writeNotify->on<uvw::async_event>([this] (auto& event, auto& handle) {
+        if (!writeTimer->active()) {
+            uvw::timer_handle::time delay((1600ULL * registers.divisor) / 18432ULL);
+            writeTimer->start(delay, uvw::timer_handle::time(0));
+        }
+    });
+
+    // create an irqfd for triggering interrupts
     fds.vm = vmFd;
     fds.irq = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (fds.irq == -1) {
-        LOG_ERROR("unable to create irq event");
-        return false;
+        auto msg = std::format("failed create eventfd: {}", strerror(errno));
+        LOG4CXX_ERROR(logger, msg);
+        throw std::runtime_error(msg);
     }
 
-    fds.refresh = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (fds.refresh == -1) {
-        LOG_ERROR("unable to create irq refresh event.");
-        return false;
+    fds.resample = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (fds.resample == -1) {
+        auto msg = std::format("failed create eventfd: {}", strerror(errno));
+        LOG4CXX_ERROR(logger, msg);
+        throw std::runtime_error(msg);
     }
 
-    mGSI = gsi;
     struct kvm_irqfd irqfd {
         .fd = (__u32) fds.irq,
-        .gsi = mGSI,
+        .gsi = gsi,
         .flags = KVM_IRQFD_FLAG_RESAMPLE,
-        .resamplefd = (__u32) fds.refresh
+        .resamplefd = (__u32) fds.resample
     };
     if (ioctl(fds.vm, KVM_IRQFD, &irqfd) == -1) {
-        LOG_ERROR("failed to add irq event");
-        return false;
+        auto msg = std::format("failed add irqfd: {}", strerror(errno));
+        LOG4CXX_ERROR(logger, msg);
+        throw std::runtime_error(msg);
     }
-
-    // whenever a client connects, perform the accept
-    mEventLoop.addEvent(fds.server, EPOLLIN, [this] (uint32_t events) {
-        if (events & EPOLLERR) {
-            LOG_ERROR("error occurred with server socket.");
-            return;
-        }
-
-        int fd = accept(fds.server, nullptr, nullptr);
-        if (fd == -1) {
-            LOG_ERROR("failed to accept client connection.");
-            return;
-        }
-
-        // add client to event loop with all events disabled. interrupt enable register handles
-        // what events we listen for
-        std::unique_lock<std::mutex> lock(mMutex);
-        mEventLoop.addEvent(fd, mEventFlags,
-                std::bind(&Serial16450::handleClientEvent, this, fd, std::placeholders::_1));
-        fds.clients.insert(fd);
-    });
 
 #if 0
     // whenever the refresh event occurs, retrigger the interrupt if needed
@@ -153,104 +150,27 @@ bool Serial16450::start(const std::string& socketName, int vmFd, uint32_t gsi)
     });
 #endif
 
-    // whenever the timeout occurs for the read timer, re-enable the read interrupts
-    mEventLoop.addEvent(fds.readTimer, EPOLLIN, [this] (uint32_t events) {
-        if (events & EPOLLERR) {
-            LOG_ERROR("error occurred with timer event");
-            return;
-        }
-
-        uint64_t data = 0;
-        read(fds.readTimer, &data, sizeof data);
-        std::unique_lock<std::mutex> lock(mMutex);
-        mEventFlags |= EPOLLIN;
-        reloadEventLoop();
-    });
-
-    // whenever the timeout occurs for the send timer, re-enable the write interrupts
-    mEventLoop.addEvent(fds.writeTimer, EPOLLIN, [this] (uint32_t events) {
-        if (events & EPOLLERR) {
-            LOG_ERROR("error occurred with timer event");
-            return;
-        }
-
-        uint64_t data = 0;
-        read(fds.writeTimer, &data, sizeof data);
-        std::unique_lock<std::mutex> lock(mMutex);
-        mEventFlags |= EPOLLOUT;
-        reloadEventLoop();
-    });
-
-    return true;
+    // kick off pty
+    pty->read();
+    registers.writable = true;
 }
 
-void Serial16450::stop() {
-    std::unique_lock<std::mutex> lock(mMutex);
-
-    for (int fd : fds.clients) {
-        mEventLoop.removeEvent(fd);
-        close(fd);
-    }
-    fds.clients.clear();
-
-    if (fds.server != -1) {
-        mEventLoop.removeEvent(fds.server);
-        close(fds.server);
-        fds.server = -1;
-    }
+Serial16450::~Serial16450()
+{
+    pty.reset();
+    close(fds.pty_slave);
+    close(fds.pty_master);
 
     if (fds.vm != -1 && fds.irq != -1) {
         struct kvm_irqfd irqfd {
             .fd = (__u32) fds.irq,
-            .gsi = mGSI,
+            .gsi = gsi,
             .flags = KVM_IRQFD_FLAG_DEASSIGN,
-            .resamplefd = (__u32) fds.refresh
+            .resamplefd = (__u32) fds.resample
         };
         ioctl(fds.vm, KVM_IRQFD, &irqfd);
         close(fds.irq);
-        close(fds.refresh);
-    }
-
-    close(fds.readTimer);
-    close(fds.writeTimer);
-}
-
-void Serial16450::handleClientEvent(int fd, uint32_t events)
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    if (events & EPOLLIN) { 
-        registers.readable = true;
-        registers.readInterruptFlag = true;
-        mEventFlags &= ~EPOLLIN;
-        if (registers.readInterruptEnabled) {
-            // can't fire a new interrupt unless there aren't any pending
-            if (!registers.writeInterruptEnabled || !registers.writeInterruptFlag) {
-                LOG_INFO("triggering interrupt (read condition)");
-                triggerInterrupt();
-            }
-        }
-    }
-    if (events & EPOLLOUT) {
-        registers.writable = true;
-        registers.writeInterruptFlag = true;
-        mEventFlags &= ~EPOLLOUT;
-        if (registers.writeInterruptEnabled) {
-            // can't fire a new interrupt unless there aren't any pending
-            if (!registers.readInterruptEnabled || !registers.readInterruptFlag) {
-                LOG_INFO("triggering interrupt (write ready condition)");
-                triggerInterrupt();
-            }
-        }
-    }
-
-    // update our listen status
-    mEventLoop.modifyEvent(fd, mEventFlags);
-}
-
-void Serial16450::reloadEventLoop()
-{
-    for (int fd : fds.clients) {
-        mEventLoop.modifyEvent(fd, mEventFlags);
+        close(fds.resample);
     }
 }
 
@@ -262,26 +182,17 @@ void Serial16450::triggerInterrupt()
 
 void Serial16450::iowrite8(uint16_t address, uint8_t data)
 {
-    std::unique_lock<std::mutex> lock(mMutex);
+    Lock lock(mutex);
 
     // 16450 uart occupies 8 bytes of address space
     Register r = static_cast<Register>(address & 0x7);
     switch (r) {
         case Register::Data_DivisorLowByte:
             if (!(registers.lineControl & 0x80) /* DLAB bit */) {
-                for (int fd : fds.clients) {
-                    write(fd, &data, 1);
-                }
+                pty->write((char *) &data, 1);
                 registers.writable = false;
                 registers.writeInterruptFlag = false;
-
-                // trigger reload timer
-                time_t delay = (1600000000ULL * registers.divisor) / 18432ULL;
-                struct itimerspec timeout {
-                    .it_interval = {},
-                    .it_value = { .tv_sec = 0, .tv_nsec = delay }
-                };
-                timerfd_settime(fds.writeTimer, 0, &timeout, nullptr);
+                writeNotify->send();
             } else {
                 reinterpret_cast<uint8_t*>(&registers.divisor)[0] = data;
             }
@@ -293,7 +204,8 @@ void Serial16450::iowrite8(uint16_t address, uint8_t data)
                 registers.interruptControl = data & 0x0f;
                 registers.readInterruptEnabled = !!(registers.interruptControl & 0x01);
                 registers.writeInterruptEnabled = !!(registers.interruptControl & 0x02);
-                LOG_INFO("interrupt control: read: " << registers.readInterruptEnabled << ", write: " << registers.writeInterruptEnabled);
+                LOG4CXX_TRACE(logger, "interrupt control: read: " << registers.readInterruptEnabled
+                        << ", write: " << registers.writeInterruptEnabled);
 
                 // if a particular interrupt was re-enabled, set the flag if the condition is met
                 if (registers.readInterruptEnabled) {
@@ -309,7 +221,7 @@ void Serial16450::iowrite8(uint16_t address, uint8_t data)
                         && (!pWriteInterruptEnabled || !registers.writeInterruptFlag)) {
                     if ((registers.readInterruptEnabled && registers.readInterruptFlag)
                             || (registers.writeInterruptEnabled && registers.writeInterruptFlag)) {
-                        LOG_INFO("triggering interrupt (pending before control register write condition)")
+                        LOG4CXX_TRACE(logger, "triggering interrupt (pending before control register write condition)");
                         triggerInterrupt();
                     }
                 }
@@ -340,29 +252,20 @@ void Serial16450::iowrite8(uint16_t address, uint8_t data)
 
 uint8_t Serial16450::ioread8(uint16_t address)
 {
-    std::unique_lock<std::mutex> lock(mMutex);
+    Lock lock(mutex);
 
     // 16450 uart occupies 8 bytes of address space
     Register r = static_cast<Register>(address & 0x7);
     switch (r) {
         case Register::Data_DivisorLowByte:
             if (!(registers.lineControl & 0x80) /* DLAB bit */) {
-                for (int fd : fds.clients) {
-                    int n = read(fd, &registers.receive, 1);
-                    if (n == 1) {
-                        break;
-                    }
+                if (!queue.empty()) {
+                    registers.receive = queue.front();
+                    queue.pop();
                 }
                 registers.readable = false;
                 registers.readInterruptFlag = false;
-
-                // trigger reload timer
-                time_t delay = (1600000000ULL * registers.divisor) / 18432ULL;
-                struct itimerspec timeout {
-                    .it_interval = {},
-                    .it_value = { .tv_sec = 0, .tv_nsec = delay }
-                };
-                timerfd_settime(fds.readTimer, 0, &timeout, nullptr);
+                readNotify->send();
                 return registers.receive;
             }
             return reinterpret_cast<uint8_t*>(&registers.divisor)[0];

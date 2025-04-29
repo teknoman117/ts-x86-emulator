@@ -1,7 +1,9 @@
 #include "DS12887.hpp"
+#include "Logger.hpp"
 
 #include <fstream>
 #include <ctime>
+#include <format>
 
 DS12887::DS12887(const MachineConfig& config) : registers{}, selectedRegister{}, ram{}, cmosPath{config.getCMOSPath()}
 {
@@ -16,6 +18,8 @@ DS12887::DS12887(const MachineConfig& config) : registers{}, selectedRegister{},
 // DevicePio implementation
 void DS12887::iowrite8(uint16_t address, uint8_t value)
 {
+    auto logger = GetLogger("machine.rtc");
+
     bool isRegisterSelect = !(address & 1);
     if (isRegisterSelect) {
         selectedRegister = static_cast<Register>(value & 0x7F);
@@ -24,7 +28,7 @@ void DS12887::iowrite8(uint16_t address, uint8_t value)
 
     switch (selectedRegister) {
         case Register::Seconds:
-            fprintf(stderr, "seconds write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("seconds write: {:#02x}", value));
             break;
         case Register::SecondsAlarm:
             if (!registers.B.DataMode) {
@@ -35,7 +39,7 @@ void DS12887::iowrite8(uint16_t address, uint8_t value)
             }
             break;
         case Register::Minutes:
-            fprintf(stderr, "minutes write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("minutes write: {:#02x}", value));
             break;
         case Register::MinutesAlarm:
             if (!registers.B.DataMode) {
@@ -46,7 +50,7 @@ void DS12887::iowrite8(uint16_t address, uint8_t value)
             }
             break;
         case Register::Hours:
-            fprintf(stderr, "hours write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("hours write: {:#02x}", value));
             break;
         case Register::HoursAlarm:
             if (!registers.B.DataMode) {
@@ -60,16 +64,16 @@ void DS12887::iowrite8(uint16_t address, uint8_t value)
             }
             break;
         case Register::Weekday:
-            fprintf(stderr, "weekday write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("weekday write: {:#02x}", value));
             break;
         case Register::Day:
-            fprintf(stderr, "day write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("day write: {:#02x}", value));
             break;
         case Register::Month:
-            fprintf(stderr, "month write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("month write: {:#02x}", value));
             break;
         case Register::Year:
-            fprintf(stderr, "year write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("year write: {:#02x}", value));
             break;
         case Register::A:
             *reinterpret_cast<uint8_t*>(&registers.A) = value & 0x7f;
@@ -84,7 +88,7 @@ void DS12887::iowrite8(uint16_t address, uint8_t value)
             // this register is not writable
             break;
         case Register::Century:
-            fprintf(stderr, "century write: %02x\n", value);
+            LOG4CXX_TRACE(logger, std::format("century write: {:#02x}", value));
             break;
         default:
         {
@@ -104,7 +108,7 @@ uint8_t DS12887::ioread8(uint16_t address)
 {
     bool isRegisterSelect = !(address & 1);
     if (isRegisterSelect) {
-        fprintf(stderr, "warning: RTC index register was read.\n");
+        LOG4CXX_WARN(GetLogger("machine.rtc"), "rtc index register was read");
         return 0;
     }
 

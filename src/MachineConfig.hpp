@@ -37,6 +37,7 @@ public:
 
     bool valid() const { return valid_; }
 
+    const std::string& getName() const { return name; }
     const Path& getCMOSPath() const { return cmosPath; }
     const Path& getFlashPath() const { return flashPath; }
     const Path& getDiskPath() const { return diskPath; }

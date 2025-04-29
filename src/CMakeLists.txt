@@ -6,7 +6,6 @@ configure_file("${CMAKE_CURRENT_LIST_DIR}/InstallConfig.hpp.in" "${CMAKE_CURRENT
 
 add_executable(emulator
     main.cpp
-    EventLoop.cpp
     MachineConfig.cpp
     Config.cpp
     Logger.cpp
@@ -18,7 +17,7 @@ add_executable(emulator
     hardware/DS12887.cpp
 )
 
-target_link_libraries(emulator PRIVATE log4cxx uvw::uvw CLI11::CLI11)
+target_link_libraries(emulator PRIVATE log4cxx CLI11::CLI11 uvw::uvw uv)
 
 target_compile_definitions(emulator PRIVATE
     $<$<BOOL:${VIRTUAL_DISK}>:VIRTUAL_DISK>

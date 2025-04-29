@@ -2,15 +2,19 @@
 #define SERIAL_HPP_
 
 #include "DevicePio.hpp"
-#include "../EventLoop.hpp"
+#include "Logger.hpp"
 
 #include <mutex>
 #include <set>
 #include <string>
 #include <thread>
 #include <vector>
+#include <filesystem>
+#include <queue>
 
-// maps a serial port to a unix socket
+#include <uvw.hpp>
+
+// maps a serial port to a unix pty
 
 class Serial16450 : public DevicePio
 {
@@ -25,23 +29,29 @@ class Serial16450 : public DevicePio
         Scratchpad = 7
     };
 
-    EventLoop mEventLoop;
-    std::string mSocketName;
-    std::mutex mMutex;
-    uint32_t mGSI;
-    int mEventFlags;
+    std::shared_ptr<uvw::loop> loop;
+    LoggerPtr logger;
+    uint32_t gsi;
+
+    std::queue<uint8_t> queue;
+    std::shared_ptr<uvw::mutex> mutex;
+
+    std::shared_ptr<uvw::tty_handle> pty;
+    std::shared_ptr<uvw::timer_handle> readTimer;
+    std::shared_ptr<uvw::timer_handle> writeTimer;
+    std::shared_ptr<uvw::async_handle> readNotify;
+    std::shared_ptr<uvw::async_handle> writeNotify;
+
+    std::vector<char> ptyPath;
 
     struct __descriptors {
-        std::set<int> clients;
-        int server;
-        int vm;
-        int irq;
-        int refresh;
-        int readTimer;
-        int writeTimer;
-        __descriptors() : clients{}, server(-1), vm(-1), irq(-1), refresh(-1),
-                readTimer(-1), writeTimer(-1) {}
-    } fds;
+        int pty_master{-1};
+        int pty_slave{-1};
+        int vm{-1};
+        int irq{-1};
+        int resample{-1};
+        __descriptors() = default;
+    } fds{};
 
     struct {
         // direct registers
@@ -60,12 +70,12 @@ class Serial16450 : public DevicePio
         bool writeInterruptEnabled;
     } registers;
 
-    void handleClientEvent(int clientFd, uint32_t events);
-    void reloadEventLoop();
     void triggerInterrupt();
 
 public:
-    Serial16450(const EventLoop& eventLoop);
+    Serial16450(std::shared_ptr<uvw::loop>& loop, const std::string& name, int vmFd, uint32_t gsi);
+
+    Serial16450() = delete;
     Serial16450(const Serial16450&) = delete;
     Serial16450(Serial16450&& port) = delete;
 
@@ -74,8 +84,7 @@ public:
     Serial16450& operator=(const Serial16450&) = delete;
     Serial16450& operator=(Serial16450&& port) = delete;
 
-    bool start(const std::string& socketName, int vmFd, uint32_t gsi);
-    void stop();
+    constexpr std::string_view getPtyPath() const { return ptyPath.data(); }
 
     // DevicePio implementation
     void iowrite8(uint16_t address, uint8_t value) override;

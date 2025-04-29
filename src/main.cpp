@@ -28,6 +28,8 @@
 #include <filesystem>
 #include <format>
 
+#include <uvw.hpp>
+
 //#define HIGH_MEMORY_SIZE (0x100000)
 #define HIGH_MEMORY_SIZE (0)
 #define LOW_MEMORY_SIZE (0x70000)
@@ -35,13 +37,6 @@
 #define PAGE_SIZE 4096
 
 typedef void (*io_handler_t)(bool is_write, uint16_t addr, void* data, size_t length, size_t count);
-
-sig_atomic_t requestExit = 0;
-
-void sigintHandler(int signo)
-{
-    requestExit = 1;
-}
 
 // see page 5-12 (pg. 85) of 386EX manual
 void handlerTimerConfiguration(bool is_write, uint16_t addr, void* data, size_t length, size_t count) {
@@ -60,7 +55,8 @@ void handlerPOSTCode(bool is_write, uint16_t addr, void* data, size_t length, si
     assert(length == 1);
     assert(count == 1);
     if (is_write) {
-        fprintf(stderr, "POST CODE: %02x\n", *reinterpret_cast<uint8_t*>(data));
+        LOG4CXX_INFO(GetLogger("machine.postcode"),
+                std::format("{:#02x}", *reinterpret_cast<uint8_t*>(data)));
     }
 }
 
@@ -88,11 +84,27 @@ void handlerUnhandled(bool is_write, uint16_t addr, void* data, size_t length, s
         memset(data, 0, length);
     }
 
-    LOG4CXX_DEBUG(GetLogger("cpu"), message);
+    LOG4CXX_TRACE(GetLogger("machine.cpu.io"), message);
 }
 
 void handlerLCD(bool is_write, uint16_t addr, void* data, size_t length, size_t count) {
-    fprintf(stderr, "LCD ACCESSED\n");
+    if (is_write) {
+        if (addr & 1) {
+            LOG4CXX_INFO(GetLogger("machine.LCD"),
+                    std::format("data: {:#02x}", *reinterpret_cast<uint8_t*>(data)));
+        } else {
+            LOG4CXX_INFO(GetLogger("machine.LCD"),
+                    std::format("command: {:#02x}", *reinterpret_cast<uint8_t*>(data)));
+        }
+    } else {
+        if (addr & 1) {
+            // data register read
+            *reinterpret_cast<uint8_t*>(data) = 0;
+        } else {
+            // busy flag read (if bit 7 is set -> busy)
+            *reinterpret_cast<uint8_t*>(data) = 0;
+        }
+    }
 }
 
 void handlerProductCode(bool is_write, uint16_t addr, void* data, size_t length, size_t count) {
@@ -119,7 +131,7 @@ void handlerJumperRegister(bool is_write, uint16_t addr, void* data, size_t leng
 
     if (!is_write) {
         // jumper 3 & 4 installed
-        fprintf(stderr, "REQUESTED JUMPER VALUES (PLD)\n");
+        LOG4CXX_TRACE(GetLogger("machine.jumpers"), "request PLD jumpers");
         *reinterpret_cast<uint8_t*>(data) = 0x02;
     }
 }
@@ -142,9 +154,7 @@ void handlerA20Gate(bool is_write, uint16_t addr, void* data, size_t length, siz
     uint8_t *data_ = reinterpret_cast<uint8_t*>(data);
     if (is_write) {
         a20register = *data_;
-#if !(defined NDEBUG)
-        fprintf(stderr, "LOADED FAST A20 GATE REGISTER = %02x\n", a20register);
-#endif
+        LOG4CXX_TRACE(GetLogger("machine.cpu.a20"), std::format("loaded {:#02x}", a20register));
     } else {
         *data_ = a20register;
     }
@@ -155,7 +165,7 @@ void handlerPort1Pin(bool is_write, uint16_t addr, void* data, size_t length, si
     assert(count == 1);
 
     if (!is_write) {
-        fprintf(stderr, "REQUESTED JUMPER VALUES (386 PORT1)\n", a20register);
+        LOG4CXX_TRACE(GetLogger("machine.jumpers"), "request PORT1 jumpers");
         *reinterpret_cast<uint8_t*>(data) = 0x80;
     }
 }
@@ -165,7 +175,7 @@ void handlerPort3Pin(bool is_write, uint16_t addr, void* data, size_t length, si
     assert(count == 1);
 
     if (!is_write) {
-        fprintf(stderr, "REQUESTED JUMPER VALUES (386 PORT3)\n", a20register);
+        LOG4CXX_TRACE(GetLogger("machine.jumpers"), "request PORT3 jumpers");
         *reinterpret_cast<uint8_t*>(data) = 0x04;
     }
 }
@@ -241,7 +251,7 @@ int main (int argc, char** argv) {
 
     auto mainLog = GetLogger("main");
     auto vmLog = GetLogger("vm");
-    auto cpuLog = GetLogger("cpu");
+    auto cpuLog = GetLogger("machine.cpu");
 
     // open the kvm handle
     int kvmFd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
@@ -335,7 +345,7 @@ int main (int argc, char** argv) {
 #endif
 
     // mmap memory to back the RAM
-    uint8_t* ram = (uint8_t*) mmap(NULL, LOW_MEMORY_SIZE + HIGH_MEMORY_SIZE, 
+    uint8_t* ram = (uint8_t*) mmap(NULL, LOW_MEMORY_SIZE + HIGH_MEMORY_SIZE,
             PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (ram == (uint8_t*) -1) {
         LOG4CXX_ERROR(mainLog, "Unable to mmap an anonymous page for lowmem: " << strerror(errno));
@@ -506,13 +516,6 @@ int main (int argc, char** argv) {
     }
 #endif
 
-#if 0
-    ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionVGARom);
-    if (ret == -1) {
-        LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
-        return EXIT_FAILURE;
-    }
-#endif
     // -----------------------------------------------------------------------------
 
     ret = ioctl(vmFd, KVM_CREATE_IRQCHIP);
@@ -581,7 +584,7 @@ int main (int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    EventLoop deviceEventLoop;
+    auto loop = uvw::loop::get_default();
 
     // -------------------- DEVICES ----------------------
     std::map<AddressRange, std::shared_ptr<DevicePio>> pioDeviceTable;
@@ -593,34 +596,24 @@ int main (int argc, char** argv) {
     std::vector<std::shared_ptr<Prescalable>> prescalableDevices = { };
     auto prescaler = std::make_shared<i386EXClockPrescaler>(prescalableDevices);
     pioDeviceTable.emplace(AddressRange{0xF804, 0x02}, prescaler);
-    
+
     // virtual device: COM1
-    auto com1 = std::make_shared<Serial16450>(deviceEventLoop);
-    if (!com1->start("/tmp/3100.com1.socket", vmFd, 4)) {
-        return EXIT_FAILURE;
-    }
+    auto com1 = std::make_shared<Serial16450>(loop, "com1", vmFd, 4);
     pioDeviceTable.emplace(AddressRange{0x03f8, 0x08}, com1);
 
     // virtual device: COM2
-    auto com2 = std::make_shared<Serial16450>(deviceEventLoop);
-    if (!com2->start("/tmp/3100.com2.socket", vmFd, 3)) {
-        return EXIT_FAILURE;
-    }
+    auto com2 = std::make_shared<Serial16450>(loop, "com2", vmFd, 3);
     pioDeviceTable.emplace(AddressRange{0x02f8, 0x08}, com2);
 
+#if 0
     // virtual device: COM3
-    auto com3 = std::make_shared<Serial16450>(deviceEventLoop);
-    if (!com3->start("/tmp/3100.com3.socket", vmFd, 4)) {
-        return EXIT_FAILURE;
-    }
+    auto com3 = std::make_shared<Serial16450>(loop, "com3", vmFd, 4);
     pioDeviceTable.emplace(AddressRange{0x03e8, 0x08}, com3);
 
     // virtual device: COM4
-    auto com4 = std::make_shared<Serial16450>(deviceEventLoop);
-    if (!com4->start("/tmp/3100.com4.socket", vmFd, 3)) {
-        return EXIT_FAILURE;
-    }
+    auto com4 = std::make_shared<Serial16450>(loop, "com4", vmFd, 3);
     pioDeviceTable.emplace(AddressRange{0x02e8, 0x08}, com4);
+#endif
 
     // virtual device: Hex Display
     auto hexDisplay = std::make_shared<HexDisplay>();
@@ -641,8 +634,20 @@ int main (int argc, char** argv) {
     pioDeviceTable.emplace(AddressRange{0x70, 0x02}, rtc);
 
     // signals
-    signal(SIGINT, sigintHandler);
+    std::atomic_bool requestExit;
+    auto sigintHandler = loop->resource<uvw::signal_handle>();
+    sigintHandler->on<uvw::signal_event>([&requestExit] (auto&, auto&) { requestExit = true; });
+    sigintHandler->start(SIGINT);
 
+    // async "kill the loop" callback
+    auto cpuShutdownNotification = loop->resource<uvw::async_handle>();
+    cpuShutdownNotification->on<uvw::async_event>([loop, cpuLog] (auto&, auto&) {
+        LOG4CXX_INFO(cpuLog, "shutdown");
+        loop->stop();
+    });
+
+    // cpu thread
+    auto cpuThread = [&](const std::shared_ptr<void> &) {
     // run until halt instruction is found
     bool previousWasDebug = false;
     uint8_t lastA20Register = a20register;
@@ -652,15 +657,15 @@ int main (int argc, char** argv) {
             if (errno == EINTR) {
                 continue;
             } else {
-                fprintf(stderr, "internal error occurred: %s\n", strerror(errno));
+                LOG4CXX_ERROR(cpuLog, "internal error occurred: " << strerror(errno));
                 break;
             }
         }
 
         switch (vcpuRun->exit_reason) {
             case KVM_EXIT_HLT:
-                fprintf(stderr, "halt instruction executed\n");
-                requestExit = 1;
+                LOG4CXX_INFO(cpuLog, "halt instruction executed");
+                requestExit = true;
                 break;
 
             case KVM_EXIT_DEBUG:
@@ -700,7 +705,8 @@ int main (int argc, char** argv) {
                     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRamWrapDisabled);
                     if (ret == -1) {
                         LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
-                        return EXIT_FAILURE;
+                        requestExit = true;
+                        continue;
                     }
 #endif
                     if (a20register & 2) {
@@ -711,13 +717,15 @@ int main (int argc, char** argv) {
 #endif
                         if (ret == -1) {
                             LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
-                            return EXIT_FAILURE;
+                            requestExit = true;
+                            continue;
                         }
                     } else {
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionRamWrap);
                         if (ret == -1) {
                             LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION: " << strerror(errno));
-                            return EXIT_FAILURE;
+                            requestExit = true;
+                            continue;
                         }
                     }
                     lastA20Register = a20register;
@@ -730,12 +738,14 @@ int main (int argc, char** argv) {
                     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionOptionRom_Unmap);
                     if (ret == -1) {
                         LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (unmap disk): " << strerror(errno));
-                        return EXIT_FAILURE;
+                        requestExit = true;
+                        continue;
                     }
 
                     if (munmap(diskData, PAGE_SIZE) == -1) {
                         LOG4CXX_ERROR(vmLog, "failed to unmap old disk data: " << strerror(errno));
-                        return EXIT_FAILURE;
+                        requestExit = true;
+                        continue;
                     }
 
                     // map a new region
@@ -743,7 +753,8 @@ int main (int argc, char** argv) {
                             MAP_SHARED, diskFd, (off_t) selectedDiskLBA * 512);
                     if (diskData == (uint8_t*) -1) {
                         LOG4CXX_ERROR(vmLog, "failed to mmap disk data: " << strerror(errno));
-                        return EXIT_FAILURE;
+                        requestExit = true;
+                        continue;
                     }
 
                     // first sector
@@ -761,10 +772,12 @@ int main (int argc, char** argv) {
                     ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionOptionRom_Disk);
                     if (ret == -1) {
                         LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (map disk): " << strerror(errno));
-                        return EXIT_FAILURE;
+                        requestExit = true;
+                        continue;
                     }
                     updateDiskMapping = false;
-                    fprintf(stderr, "virtual disk: LBA mapped: %08x\n", selectedDiskLBA);
+                    LOG4CXX_TRACE(GetLogger("machine.vdisk"),
+                            std::format("virtual disk: LBA mapped: {:#08x}", selectedDiskLBA));
                 }
 #endif
             }
@@ -778,7 +791,7 @@ int main (int argc, char** argv) {
                         // do with w aht you'd do outside
                         fprintf(stderr, "unhandled coalesced KVM_EXIT_MMIO.\n");
                         ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
-                    }   
+                    }
                 }*/
 
                 // the flash disk is being accessed
@@ -814,30 +827,30 @@ int main (int argc, char** argv) {
                         } else if (flashState == FlashState::CommandByte_2 && ((offset & 0x7FF) == 0x555) && command == 0x90) {
                             flashState = FlashState::ProductIdentification;
                             unmapFlash = true;
-                            fprintf(stderr, "flash disk: detected product identification command.\n");
+                            LOG4CXX_TRACE(GetLogger("machine.flash"), "product identify command");
                         } else if (flashState == FlashState::CommandByte_5 && command == 0x30) {
                             // sector erase
                             memset(flashMemory + (offset & 0x70000), 0xff, 0x10000);
                             flashState = FlashState::Read;
-                            fprintf(stderr, "flash disk: sector erased: %016lx\n", offset & 0x70000);
+                            LOG4CXX_TRACE(GetLogger("machine.flash"),
+                                    std::format("sector erased: {:#016x}", offset & 0x70000));
                         } else if (flashState == FlashState::CommandByte_5 && ((offset & 0x7FF) == 0x555) && command == 0x10) {
                             // chip erase
                             memset(flashMemory, 0xff, 0x80000);
                             flashState = FlashState::Read;
-                            fprintf(stderr, "flash disk: chip erased\n");
+                            LOG4CXX_TRACE(GetLogger("machine.flash"), "chip erased");
                         } else {
-                            fprintf(stderr, "flash disk: unknown command sequence.\n");
+                            LOG4CXX_WARN(GetLogger("machine.flash"), "unknown command sequence");
                             flashState = FlashState::Read;
-                            return EXIT_FAILURE;
                         }
-                    } else { 
+                    } else {
                         // Reading data from the flash disk
                         //fprintf(stderr, "\n");
                         if (flashState == FlashState::ProductIdentification) {
                             mapFlash = true;
                             *reinterpret_cast<uint8_t*>(vcpuRun->mmio.data) =
                                     (offset & 1) ? 0xA4 : 0x01;
-                            fprintf(stderr, "flash disk: product identification read.\n");
+                            LOG4CXX_TRACE(GetLogger("machine.flash"), "product identifier read");
                         }
                         flashState = FlashState::Read;
                     }
@@ -847,27 +860,31 @@ int main (int argc, char** argv) {
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlash_Unmap);
                         if (ret == -1) {
                             LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (unmap flash): " << strerror(errno));
-                            return EXIT_FAILURE;
+                            requestExit = true;
+                            continue;
                         }
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlashAlias_Unmap);
                         if (ret == -1) {
                             LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (unmap flash alias): " << strerror(errno));
-                            return EXIT_FAILURE;
+                            requestExit = true;
+                            continue;
                         }
                     } else if (mapFlash) {
                         // map the flash memory
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlash);
                         if (ret == -1) {
                             LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (map flash): " << strerror(errno));
-                            return EXIT_FAILURE;
+                            requestExit = true;
+                            continue;
                         }
                         ret = ioctl(vmFd, KVM_SET_USER_MEMORY_REGION, &regionFlashAlias);
                         if (ret == -1) {
                             LOG4CXX_ERROR(vmLog, "KVM_SET_USER_MEMORY_REGION (map flash alias): " << strerror(errno));
-                            return EXIT_FAILURE;
+                            requestExit = true;
+                            continue;
                         }
                     }
-                } else {                 
+                } else {
     #if !(defined NDEBUG)
                     auto message = std::format("unhandled mmio exit: {} addr:{:#08x} length:{} ",
                         vcpuRun->mmio.is_write ? "write" : "read",
@@ -887,14 +904,15 @@ int main (int argc, char** argv) {
                         memset(vcpuRun->mmio.data, 0, sizeof vcpuRun->mmio.data);
                     }
     #if !(defined NDEBUG)
-                    LOG4CXX_DEBUG(cpuLog, message);
+                    LOG4CXX_TRACE(cpuLog, message);
     #endif
                 }
                 break;
 
             default:
-                LOG4CXX_DEBUG(cpuLog, "unhandled exit: " << vcpuRun->exit_reason);
-                return EXIT_FAILURE;
+                LOG4CXX_ERROR(cpuLog, "unhandled exit: " << vcpuRun->exit_reason);
+                requestExit = true;
+                continue;
         }
 
         // handle coalesce ring
@@ -904,8 +922,37 @@ int main (int argc, char** argv) {
                 // do with w aht you'd do outside
                 fprintf(stderr, "unhandled coalesced KVM_EXIT_MMIO.\n");
                 ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
-            }   
+            }
         }*/
     }
+    cpuShutdownNotification->send();
+    };
+
+    // launch a serial terminal for com2
+    uvw::process_handle::disable_stdio_inheritance();
+    auto terminalHandle = loop->resource<uvw::process_handle>();
+    terminalHandle->stdio(uvw::std_in, uvw::process_handle::stdio_flags::IGNORE_STREAM);
+    terminalHandle->stdio(uvw::std_out, uvw::process_handle::stdio_flags::IGNORE_STREAM);
+    terminalHandle->stdio(uvw::std_err, uvw::process_handle::stdio_flags::IGNORE_STREAM);
+    std::array<char*, 6> args = {
+        strdup("xterm"),
+        strdup("-e"),
+        strdup("minicom"),
+        strdup("-D"),
+        strdup(com2->getPtyPath().data()),
+        nullptr
+    };
+    terminalHandle->spawn("xterm", args.data());
+    terminalHandle->on<uvw::exit_event>([args_=std::move(args)] (auto&, auto& handle) {
+        std::for_each(args_.begin(), args_.end(), [] (auto& arg) {free(arg);});
+    });
+
+    // kick off the cpu and the loop
+    auto cpuHandle = loop->resource<uvw::thread>(cpuThread, nullptr);
+    cpuHandle->run();
+    loop->run();
+    cpuHandle->join();
+
+    LOG4CXX_INFO(mainLog, "exit");
     return EXIT_SUCCESS;
 }
