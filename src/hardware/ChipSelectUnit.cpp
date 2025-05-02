@@ -76,3 +76,27 @@ uint16_t ChipSelectUnit::ioread16(uint16_t address)
     }
     return 0xffff;
 }
+
+
+int ChipSelectUnit::mappable(size_t address)
+{
+    if (device && selectsMemoryAddress(address)) {
+        return device->mappable(address);
+    }
+    return 0;
+}
+
+std::optional<MemoryDevice::Mapping> ChipSelectUnit::map(size_t address, bool write)
+{
+    if (device && selectsMemoryAddress(address)) {
+        return device->map(address, write);
+    }
+    return {};
+}
+
+void ChipSelectUnit::unmap(size_t address)
+{
+    if (device && selectsMemoryAddress(address)) {
+        return device->unmap(address);
+    }
+}

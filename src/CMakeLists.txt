@@ -15,6 +15,8 @@ add_executable(emulator
     hardware/Serial.cpp
     hardware/HexDisplay.cpp
     hardware/DS12887.cpp
+    hardware/ROM.cpp
+    hardware/RAM.cpp
 )
 
 target_link_libraries(emulator PRIVATE log4cxx CLI11::CLI11 uvw::uvw uv)

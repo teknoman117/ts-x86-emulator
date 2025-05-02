@@ -5,8 +5,9 @@
 #include <string>
 
 #include "DevicePio.hpp"
+#include "MemoryDevice.hpp"
 
-struct ChipSelectUnit : public DevicePio {
+struct ChipSelectUnit : public DevicePio, MemoryDevice {
     // bits that the 386EX Chip Select Units can actually operate on
     static constexpr uint32_t HardwareMask = 0x03FFF800;
 
@@ -63,22 +64,29 @@ struct ChipSelectUnit : public DevicePio {
         uint32_t maskRegister;
     };
 
+    MemoryDevice* device;
+
     bool selectsMemoryAddress(uint32_t address /*in future, include processor state */) const;
     bool selectsIOAddress(uint16_t address /*in future, include processor state */) const;
     void Debug(const std::string& deviceName) const;
 
-    constexpr ChipSelectUnit() : addressRegister(0), maskRegister(0) {}
+    constexpr ChipSelectUnit() : addressRegister(0), maskRegister(0), device(nullptr) {}
 
     constexpr ChipSelectUnit(uint16_t addressHigh, uint16_t addressLow, uint16_t maskHigh,
             uint16_t maskLow)
         : addressLowRegister(addressLow), addressHighRegister(addressHigh),
-          addressMaskLowRegister(maskLow), addressMaskHighRegister(maskHigh) {}
+          addressMaskLowRegister(maskLow), addressMaskHighRegister(maskHigh), device(nullptr) {}
 
     virtual ~ChipSelectUnit() = default;
 
     // DevicePio implementation
     void iowrite16(uint16_t address, uint16_t value) override;
     uint16_t ioread16(uint16_t address) override;
+
+    // MemoryDevice implementation
+    int mappable(size_t address) override;
+    std::optional<MemoryDevice::Mapping> map(size_t address, bool write = false) override;
+    void unmap(size_t address) override;
 };
 
 #endif /* CHIPSELECTUNIT_HPP_ */
